@@ -1,0 +1,255 @@
+import base64
+import io
+import sys
+import magic
+import pathlib
+import os
+import glob
+import mutagen
+import tkinter as tk
+from tkinter import filedialog
+from Crypto.Cipher import AES
+from Crypto.Util.Padding import pad
+from mutagen.easyid3 import ID3
+from wasmer import Store, Module, Instance, Uint8Array, Int32Array, engine
+from wasmer_compiler_cranelift import Compiler
+
+
+class XMInfo:
+    def __init__(self):
+        self.title = ""
+        self.artist = ""
+        self.album = ""
+        self.tracknumber = 0
+        self.size = 0
+        self.header_size = 0
+        self.ISRC = ""
+        self.encodedby = ""
+        self.encoding_technology = ""
+
+    def iv(self):
+        if self.ISRC != "":
+            return bytes.fromhex(self.ISRC)
+        return bytes.fromhex(self.encodedby)
+
+
+def get_str(x):
+    if x is None:
+        return ""
+    return x
+
+
+def read_file(x):
+    with open(x, "rb") as f:
+        return f.read()
+
+
+def get_xm_info(data: bytes):
+    id3 = ID3(io.BytesIO(data), v2_version=3)
+    id3value = XMInfo()
+    id3value.title = str(id3["TIT2"])
+    id3value.album = str(id3["TALB"])
+    id3value.artist = str(id3["TPE1"])
+    id3value.tracknumber = int(str(id3["TRCK"]))
+    id3value.ISRC = "" if id3.get("TSRC") is None else str(id3["TSRC"])
+    id3value.encodedby = "" if id3.get("TENC") is None else str(id3["TENC"])
+    id3value.size = int(str(id3["TSIZ"]))
+    id3value.header_size = id3.size
+    id3value.encoding_technology = str(id3["TSSE"])
+    return id3value
+
+
+def get_printable_count(x: bytes):
+    i = 0
+    for i, c in enumerate(x):
+        if c < 0x20 or c > 0x7e:
+            return i
+    return i
+
+
+def get_printable_bytes(x: bytes):
+    return x[:get_printable_count(x)]
+
+
+def xm_decrypt(raw_data):
+    # 使用绝对路径确保不管在哪里运行都能找到 wasm 文件
+    wasm_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "xm_encryptor.wasm")
+    xm_encryptor = Instance(Module(
+        Store(engine.Universal(Compiler)),
+        open(wasm_path, "rb").read()
+    ))
+    
+    xm_info = get_xm_info(raw_data)
+    encrypted_data = raw_data[xm_info.header_size:xm_info.header_size + xm_info.size:]
+
+    # Stage 1 aes-256-cbc
+    xm_key = b"ximalayaximalayaximalayaximalaya"
+    cipher = AES.new(xm_key, AES.MODE_CBC, xm_info.iv())
+    de_data = cipher.decrypt(pad(encrypted_data, 16))
+    
+    # Stage 2 xmDecrypt (原汁原味的底层混淆函数调用)
+    de_data = get_printable_bytes(de_data)
+    track_id = str(xm_info.tracknumber).encode()
+    stack_pointer = xm_encryptor.exports.a(-16)
+    assert isinstance(stack_pointer, int)
+    de_data_offset = xm_encryptor.exports.c(len(de_data))
+    assert isinstance(de_data_offset, int)
+    track_id_offset = xm_encryptor.exports.c(len(track_id))
+    assert isinstance(track_id_offset, int)
+    memory_i = xm_encryptor.exports.i
+    memview_unit8: Uint8Array = memory_i.uint8_view(offset=de_data_offset)
+    for i, b in enumerate(de_data):
+        memview_unit8[i] = b
+    memview_unit8: Uint8Array = memory_i.uint8_view(offset=track_id_offset)
+    for i, b in enumerate(track_id):
+        memview_unit8[i] = b
+        
+    xm_encryptor.exports.g(stack_pointer, de_data_offset, len(de_data), track_id_offset, len(track_id))
+    memview_int32: Int32Array = memory_i.int32_view(offset=stack_pointer // 4)
+    result_pointer = memview_int32[0]
+    result_length = memview_int32[1]
+    
+    result_data = bytearray(memory_i.buffer)[result_pointer:result_pointer + result_length].decode()
+    
+    # Stage 3 combine
+    decrypted_data = base64.b64decode(xm_info.encoding_technology + result_data)
+    final_data = decrypted_data + raw_data[xm_info.header_size + xm_info.size::]
+    return xm_info, final_data
+
+
+def find_ext(data):
+    exts = ["m4a", "mp3", "flac", "wav"]
+    value = magic.from_buffer(data).lower()
+    for ext in exts:
+        if ext in value:
+            return ext
+    raise Exception(f"unexpected format {value}")
+
+
+def replace_invalid_chars(name):
+    invalid_chars = ['/', '\\', ':', '*', '?', '"', '<', '>', '|']
+    for char in invalid_chars:
+        if char in name:
+            name = name.replace(char, " ")
+    return name
+
+
+def decrypt_xm_file(from_file, output_path):
+    data = read_file(from_file)
+    info, audio_data = xm_decrypt(data)
+    
+    album_name = replace_invalid_chars(info.album)
+    title_name = replace_invalid_chars(info.title)
+    ext = find_ext(audio_data[:0xff])
+    
+    album_path = os.path.join(output_path, album_name)
+    if not os.path.exists(album_path):
+        os.makedirs(album_path)
+        
+    output_file = os.path.join(album_path, f"{title_name}.{ext}")
+    
+    buffer = io.BytesIO(audio_data)
+    tags = mutagen.File(buffer, easy=True)
+    tags["title"] = info.title
+    tags["album"] = info.album
+    tags["artist"] = info.artist
+    tags.save(buffer)
+    
+    with open(output_file, "wb") as f:
+        buffer.seek(0)
+        f.write(buffer.read())
+
+
+def select_file():
+    root = tk.Tk()
+    root.withdraw()
+    file_path = filedialog.askopenfilename()
+    root.destroy()
+    return file_path
+
+
+def select_directory():
+    root = tk.Tk()
+    root.withdraw()
+    directory_path = filedialog.askdirectory()
+    root.destroy()
+    return directory_path
+
+
+if __name__ == "__main__":
+    while True:
+        print("\n" + "="*45)
+        print(" 欢迎使用喜马拉雅音频解密工具 (增强稳定版) ")
+        print("="*45)
+        print("1. 解密单个文件")
+        print("2. 批量解密文件")
+        print("3. 退出")
+        choice = input("请输入选项: ")
+        
+        if choice == "1" or choice == "2":
+            if choice == "1":
+                files_to_decrypt = [select_file()]
+                if files_to_decrypt == [""]:
+                    print("检测到文件选择窗口被关闭")
+                    continue
+            elif choice == "2":
+                dir_to_decrypt = select_directory()
+                if dir_to_decrypt == "":
+                    print("检测到目录选择窗口被关闭")
+                    continue
+                files_to_decrypt = glob.glob(os.path.join(dir_to_decrypt, "*.xm"))
+                
+            if not files_to_decrypt:
+                print("未找到待处理的 .xm 文件！")
+                continue
+                
+            print("\n请选择是否需要设置输出路径：（不设置默认为本程序目录下的output文件夹）")
+            print("1. 设置输出路径")
+            print("2. 不设置输出路径")
+            out_choice = input("请输入: ")
+            
+            if out_choice == "1":
+                output_path = select_directory()
+                if output_path == "":
+                    print("检测到目录选择窗口被关闭")
+                    continue
+            else:
+                output_path = os.path.join(os.getcwd(), "output")
+                
+            if not os.path.exists(output_path):
+                os.makedirs(output_path)
+
+            success_count = 0
+            failed_list = []
+            
+            print(f"\n开始处理，共 {len(files_to_decrypt)} 个文件...")
+            
+            # 【增强核心：防闪退与空文件识别逻辑】
+            for file in files_to_decrypt:
+                file_name = os.path.basename(file)
+                print(f"正在处理: {file_name} ...", end=" ")
+                
+                try:
+                    if os.path.getsize(file) == 0:
+                        raise Exception("文件大小为 0KB (空文件/下载损坏)")
+                        
+                    decrypt_xm_file(file, output_path)
+                    
+                    print("--> 成功！")
+                    success_count += 1
+                except Exception as e:
+                    print(f"--> 失败: {e}")
+                    failed_list.append(f"{file_name} (原因: {e})")
+            
+            print("\n" + "="*30)
+            print(f"任务完成！成功: {success_count} 个")
+            if failed_list:
+                print(f"失败: {len(failed_list)} 个，清单如下：")
+                for fail in failed_list:
+                    print(f"  - {fail}")
+            print("="*30)
+            
+        elif choice == "3":
+            sys.exit()
+        else:
+            print("输入错误，请重新输入！")
