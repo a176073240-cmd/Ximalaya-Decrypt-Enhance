@@ -26,6 +26,14 @@
 
 ```bash
 pip install mutagen pycryptodome wasmer==1.1.0 wasmer_compiler_cranelift==1.1.0 python-magic-bin
+```
+
+安装完成后，运行脚本即可：
+```bash
+python main.py
+```
+
+---
 
 ## 🎁 附赠工具：音频智能排序重命名
 
