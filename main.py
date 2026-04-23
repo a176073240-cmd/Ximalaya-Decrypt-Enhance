@@ -87,7 +87,7 @@ def xm_decrypt(raw_data):
     cipher = AES.new(xm_key, AES.MODE_CBC, xm_info.iv())
     de_data = cipher.decrypt(pad(encrypted_data, 16))
     
-    # Stage 2 xmDecrypt (原汁原味的底层混淆函数调用)
+    # Stage 2 xmDecrypt
     de_data = get_printable_bytes(de_data)
     track_id = str(xm_info.tracknumber).encode()
     stack_pointer = xm_encryptor.exports.a(-16)
@@ -149,7 +149,21 @@ def decrypt_xm_file(from_file, output_path):
     output_file = os.path.join(album_path, f"{title_name}.{ext}")
     
     buffer = io.BytesIO(audio_data)
-    tags = mutagen.File(buffer, easy=True)
+    
+    # 【新增功能：内存级音频完整性校验】
+    try:
+        tags = mutagen.File(buffer, easy=True)
+        if tags is None:
+            raise ValueError("无法识别音频格式，文件可能已严重损坏")
+            
+        # 尝试读取时长。如果是半截的残次文件，这里必然会触发 MutagenError
+        _ = tags.info.length
+        
+    except mutagen.MutagenError: # <-- 这里已经修复好了！
+        # 一旦发现音频流中断，直接抛出错误拦截保存动作！
+        raise ValueError("音频流提前中断，源文件下载不完整，请重新下载")
+        
+    # 校验通过，正常写入标签
     tags["title"] = info.title
     tags["album"] = info.album
     tags["artist"] = info.artist
@@ -180,6 +194,7 @@ if __name__ == "__main__":
     while True:
         print("\n" + "="*45)
         print(" 欢迎使用喜马拉雅音频解密工具 (增强稳定版) ")
+        print(" 核心解密算法原作者: GitHub @sld272 ")
         print("="*45)
         print("1. 解密单个文件")
         print("2. 批量解密文件")
@@ -224,7 +239,7 @@ if __name__ == "__main__":
             
             print(f"\n开始处理，共 {len(files_to_decrypt)} 个文件...")
             
-            # 【增强核心：防闪退与空文件识别逻辑】
+            # 【增强核心：防闪退与空文件/残缺文件识别逻辑】
             for file in files_to_decrypt:
                 file_name = os.path.basename(file)
                 print(f"正在处理: {file_name} ...", end=" ")
@@ -241,13 +256,13 @@ if __name__ == "__main__":
                     print(f"--> 失败: {e}")
                     failed_list.append(f"{file_name} (原因: {e})")
             
-            print("\n" + "="*30)
+            print("\n" + "="*50)
             print(f"任务完成！成功: {success_count} 个")
             if failed_list:
                 print(f"失败: {len(failed_list)} 个，清单如下：")
                 for fail in failed_list:
                     print(f"  - {fail}")
-            print("="*30)
+            print("="*50)
             
         elif choice == "3":
             sys.exit()
