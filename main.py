@@ -50,7 +50,12 @@ def get_xm_info(data: bytes):
     id3value.title = str(id3["TIT2"])
     id3value.album = str(id3["TALB"])
     id3value.artist = str(id3["TPE1"])
-    id3value.tracknumber = int(str(id3["TRCK"]))
+    # 提取官方文件头里自带的真实集数序号
+    try:
+        id3value.tracknumber = int(str(id3["TRCK"]))
+    except:
+        id3value.tracknumber = 0
+        
     id3value.ISRC = "" if id3.get("TSRC") is None else str(id3["TSRC"])
     id3value.encodedby = "" if id3.get("TENC") is None else str(id3["TENC"])
     id3value.size = int(str(id3["TSIZ"]))
@@ -72,7 +77,6 @@ def get_printable_bytes(x: bytes):
 
 
 def xm_decrypt(raw_data):
-    # 使用绝对路径确保不管在哪里运行都能找到 wasm 文件
     wasm_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "xm_encryptor.wasm")
     xm_encryptor = Instance(Module(
         Store(engine.Universal(Compiler)),
@@ -134,7 +138,7 @@ def replace_invalid_chars(name):
     return name
 
 
-def decrypt_xm_file(from_file, output_path):
+def decrypt_xm_file(from_file, output_path, do_rename=False):
     data = read_file(from_file)
     info, audio_data = xm_decrypt(data)
     
@@ -146,24 +150,35 @@ def decrypt_xm_file(from_file, output_path):
     if not os.path.exists(album_path):
         os.makedirs(album_path)
         
-    output_file = os.path.join(album_path, f"{title_name}.{ext}")
+    # 【原生级集数重命名】
+    if do_rename and info.tracknumber > 0:
+        formatted_name = f"{info.tracknumber:04d} - {title_name}.{ext}"
+        output_file = os.path.join(album_path, formatted_name)
+    else:
+        output_file = os.path.join(album_path, f"{title_name}.{ext}")
     
     buffer = io.BytesIO(audio_data)
     
-    # 【新增功能：内存级音频完整性校验】
+    # 【内存级音频双重完整性校验】
     try:
         tags = mutagen.File(buffer, easy=True)
         if tags is None:
             raise ValueError("无法识别音频格式，文件可能已严重损坏")
             
-        # 尝试读取时长。如果是半截的残次文件，这里必然会触发 MutagenError
-        _ = tags.info.length
+        duration = getattr(tags.info, 'length', 0)
+        bitrate = getattr(tags.info, 'bitrate', 0)
         
-    except mutagen.MutagenError: # <-- 这里已经修复好了！
-        # 一旦发现音频流中断，直接抛出错误拦截保存动作！
-        raise ValueError("音频流提前中断，源文件下载不完整，请重新下载")
+        if duration > 0 and bitrate > 0:
+            expected_size = (duration * bitrate) / 8
+            actual_size = len(audio_data)
+            completion_rate = actual_size / expected_size
+            
+            if completion_rate < 0.85:
+                raise ValueError(f"下载断层 (完整度仅 {completion_rate*100:.1f}%)")
+                
+    except mutagen.MutagenError:
+        raise ValueError("音频流格式破坏，源文件下载不完整")
         
-    # 校验通过，正常写入标签
     tags["title"] = info.title
     tags["album"] = info.album
     tags["artist"] = info.artist
@@ -190,12 +205,12 @@ def select_directory():
     return directory_path
 
 
-if __name__ == "__main__":
+def main_loop():
     while True:
-        print("\n" + "="*45)
-        print(" 欢迎使用喜马拉雅音频解密工具 (增强稳定版) ")
-        print(" 核心解密算法原作者: GitHub @sld272 ")
-        print("="*45)
+        print("\n" + "="*50)
+        print(" 欢迎使用喜马拉雅音频解密工具 (大一统旗舰版 v1.0.4) ")
+        print(" 核心算法: @sld272 | 维护加强: @a176073240-cmd ")
+        print("="*50)
         print("1. 解密单个文件")
         print("2. 批量解密文件")
         print("3. 退出")
@@ -214,14 +229,21 @@ if __name__ == "__main__":
                     continue
                 files_to_decrypt = glob.glob(os.path.join(dir_to_decrypt, "*.xm"))
                 
-            if not files_to_decrypt:
+            total_files = len(files_to_decrypt)
+            if total_files == 0:
                 print("未找到待处理的 .xm 文件！")
                 continue
                 
+            print("\n请选择是否需要在文件名前面加上序号（按顺序重命名）：")
+            print("1. 不进行按顺序重命名 (输出例如：马拉车.m4a)")
+            print("2. 进行按顺序重命名   (输出例如：0204 - 马拉车.m4a)")
+            rename_choice = input("请输入 (1/2): ")
+            do_rename = (rename_choice == "2")
+
             print("\n请选择是否需要设置输出路径：（不设置默认为本程序目录下的output文件夹）")
             print("1. 设置输出路径")
             print("2. 不设置输出路径")
-            out_choice = input("请输入: ")
+            out_choice = input("请输入 (1/2): ")
             
             if out_choice == "1":
                 output_path = select_directory()
@@ -237,34 +259,52 @@ if __name__ == "__main__":
             success_count = 0
             failed_list = []
             
-            print(f"\n开始处理，共 {len(files_to_decrypt)} 个文件...")
+            print(f"\n🚀 开始火力全开处理，共 {total_files} 个文件...")
+            print("（运行期间将隐藏成功提示，保持静默，请耐心等待进度条走完）\n")
             
-            # 【增强核心：防闪退与空文件/残缺文件识别逻辑】
-            for file in files_to_decrypt:
+            for i, file in enumerate(files_to_decrypt, 1):
                 file_name = os.path.basename(file)
-                print(f"正在处理: {file_name} ...", end=" ")
+                
+                print(f"\r⏳ 正在解密进度: [ {i} / {total_files} ]", end="", flush=True)
                 
                 try:
                     if os.path.getsize(file) == 0:
-                        raise Exception("文件大小为 0KB (空文件/下载损坏)")
+                        raise Exception("文件大小为 0KB (空文件)")
                         
-                    decrypt_xm_file(file, output_path)
-                    
-                    print("--> 成功！")
+                    decrypt_xm_file(file, output_path, do_rename)
                     success_count += 1
                 except Exception as e:
-                    print(f"--> 失败: {e}")
-                    failed_list.append(f"{file_name} (原因: {e})")
+                    failed_list.append((file_name, str(e)))
             
-            print("\n" + "="*50)
-            print(f"任务完成！成功: {success_count} 个")
+            print("\n\n" + "="*50)
+            print(" 📊 解密任务分类报告")
+            print("="*50)
+            
+            print(f"✅ 完美解密文件: {success_count} 个")
+            
             if failed_list:
-                print(f"失败: {len(failed_list)} 个，清单如下：")
-                for fail in failed_list:
-                    print(f"  - {fail}")
+                print(f"\n🚨 智能拦截残次品/失败: {len(failed_list)} 个，清单如下：")
+                print("-" * 45)
+                for fail_name, reason in failed_list:
+                    print(f"❌ {fail_name}")
+                    print(f"   -> 状态: {reason}")
+                print("-" * 45)
+                print("\n💡 提示：请根据以上清单，回客户端重新下载这几个文件即可。")
+            else:
+                print("\n🎉 恭喜！本次转码零失误，全部完美保存！")
+            
             print("="*50)
             
         elif choice == "3":
             sys.exit()
         else:
             print("输入错误，请重新输入！")
+
+if __name__ == "__main__":
+    try:
+        main_loop()
+    except Exception as e:
+        print(f"\n\n🚨 哎呀！程序发生了意外的崩溃！")
+        print(f"崩溃原因: {e}")
+    finally:
+        input("\n按回车键退出窗口...")
