@@ -11,8 +11,7 @@ from tkinter import filedialog
 from Crypto.Cipher import AES
 from Crypto.Util.Padding import pad
 from mutagen.easyid3 import ID3
-from wasmer import Store, Module, Instance, Uint8Array, Int32Array, engine
-from wasmer_compiler_cranelift import Compiler
+import wasmtime
 
 
 class XMInfo:
@@ -80,10 +79,10 @@ def get_printable_bytes(x: bytes):
 
 def xm_decrypt(raw_data):
     wasm_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "xm_encryptor.wasm")
-    xm_encryptor = Instance(Module(
-        Store(engine.Universal(Compiler)),
-        open(wasm_path, "rb").read()
-    ))
+    store = wasmtime.Store()
+    module = wasmtime.Module.from_file(store.engine, wasm_path)
+    xm_encryptor = wasmtime.Instance(store, module, [])
+    exports = xm_encryptor.exports(store)
     
     xm_info = get_xm_info(raw_data)
     encrypted_data = raw_data[xm_info.header_size:xm_info.header_size + xm_info.size:]
@@ -100,26 +99,22 @@ def xm_decrypt(raw_data):
     # Stage 2 xmDecrypt
     de_data = get_printable_bytes(de_data)
     track_id = str(xm_info.tracknumber).encode()
-    stack_pointer = xm_encryptor.exports.a(-16)
+    stack_pointer = exports["a"](store, -16)
     assert isinstance(stack_pointer, int)
-    de_data_offset = xm_encryptor.exports.c(len(de_data))
+    de_data_offset = exports["c"](store, len(de_data))
     assert isinstance(de_data_offset, int)
-    track_id_offset = xm_encryptor.exports.c(len(track_id))
+    track_id_offset = exports["c"](store, len(track_id))
     assert isinstance(track_id_offset, int)
-    memory_i = xm_encryptor.exports.i
-    memview_unit8: Uint8Array = memory_i.uint8_view(offset=de_data_offset)
-    for i, b in enumerate(de_data):
-        memview_unit8[i] = b
-    memview_unit8: Uint8Array = memory_i.uint8_view(offset=track_id_offset)
-    for i, b in enumerate(track_id):
-        memview_unit8[i] = b
-        
-    xm_encryptor.exports.g(stack_pointer, de_data_offset, len(de_data), track_id_offset, len(track_id))
-    memview_int32: Int32Array = memory_i.int32_view(offset=stack_pointer // 4)
-    result_pointer = memview_int32[0]
-    result_length = memview_int32[1]
+    memory_i = exports["i"]
+    memory_i.write(store, de_data, de_data_offset)
+    memory_i.write(store, track_id, track_id_offset)
+
+    exports["g"](store, stack_pointer, de_data_offset, len(de_data), track_id_offset, len(track_id))
+    result_header = memory_i.read(store, stack_pointer, stack_pointer + 8)
+    result_pointer = int.from_bytes(result_header[0:4], "little", signed=True)
+    result_length = int.from_bytes(result_header[4:8], "little", signed=True)
     
-    result_data = bytearray(memory_i.buffer)[result_pointer:result_pointer + result_length].decode()
+    result_data = bytes(memory_i.read(store, result_pointer, result_pointer + result_length)).decode()
     
     # Stage 3 combine
     decrypted_data = base64.b64decode(xm_info.encoding_technology + result_data)
@@ -238,7 +233,7 @@ def select_directory():
 def main_loop():
     while True:
         print("\n" + "="*50)
-        print(" 欢迎使用喜马拉雅音频解密工具 (大一统旗舰版 v1.0.5) ")
+        print(" 欢迎使用喜马拉雅音频解密工具 (v1.0.6) ")
         print(" 核心算法: @sld272 | 维护加强: @a176073240-cmd ")
         print("="*50)
         print("1. 解密单个文件")
