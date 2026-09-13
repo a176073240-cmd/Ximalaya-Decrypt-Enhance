@@ -238,7 +238,7 @@ def select_directory():
 def main_loop():
     while True:
         print("\n" + "="*50)
-        print(" 欢迎使用喜马拉雅音频解密工具 (大一统旗舰版 v1.0.4) ")
+        print(" 欢迎使用喜马拉雅音频解密工具 (大一统旗舰版 v1.0.5) ")
         print(" 核心算法: @sld272 | 维护加强: @a176073240-cmd ")
         print("="*50)
         print("1. 解密单个文件")
