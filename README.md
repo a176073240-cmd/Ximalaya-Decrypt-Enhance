@@ -1,16 +1,16 @@
 # 喜马拉雅 XM 解密工具
 
-这是一个在电脑本地运行的 `.xm` 音频解密工具，可以把解密后的音频保存为 `m4a`、`mp3`、`flac` 或 `wav`。音频里的标题、专辑和艺术家信息也会一并写入文件。
+把喜马拉雅下载下来的 `.xm` 文件解密成常见音频格式。程序在本地处理文件，解密后会尽量保留标题、专辑和艺术家等信息，输出格式支持 `m4a`、`mp3`、`flac` 和 `wav`。
 
 当前版本：**v1.0.5**
 
-请只处理你有权使用的音频，并遵守喜马拉雅的服务条款和当地法律。
+> 请只处理你有权使用的音频，并遵守喜马拉雅的服务条款和当地法律。
 
 ## 下载
 
-到 [Releases](https://github.com/a176073240-cmd/Ximalaya-Decrypt-Enhance/releases) 页面下载最新版本。
+去 [Releases](https://github.com/a176073240-cmd/Ximalaya-Decrypt-Enhance/releases) 下载最新版本。
 
-目前 Release 里提供的是源码压缩包 `Ximalaya-Decrypt-v1.0.5.zip`，里面有：
+目前发布的是源码压缩包 `Ximalaya-Decrypt-v1.0.5.zip`，解压后可以看到：
 
 ```text
 main.py
@@ -19,45 +19,36 @@ xm_encryptor.wasm
 README.md
 ```
 
-仓库暂时没有提供预编译的 `.exe`。如果你直接运行源码，需要安装 Python 和下面列出的依赖。`xm_encryptor.wasm` 必须和 `main.py` 放在同一个目录里。
+暂时没有打包好的 `.exe`。直接运行源码需要安装 Python 和项目依赖；`xm_encryptor.wasm` 也要和 `main.py` 放在一起，不能漏掉。
 
-## 直接运行源码
+## 运行源码
 
-建议使用 64 位 Windows 和 Python 3.10。先打开 PowerShell，在项目目录执行：
+目前建议在 64 位 Windows、Python 3.10 环境下运行。打开 PowerShell，进入项目目录后执行：
 
 ```powershell
 python -m venv .venv
 .\.venv\Scripts\Activate.ps1
 python -m pip install --upgrade pip
 python -m pip install mutagen pycryptodome wasmer==1.1.0 wasmer_compiler_cranelift==1.1.0 python-magic-bin
-```
-
-然后启动程序：
-
-```powershell
 python main.py
 ```
 
-如果虚拟环境脚本被 PowerShell 拦截，也可以直接运行：
+如果 PowerShell 不允许执行虚拟环境脚本，可以直接调用虚拟环境里的 Python：
 
 ```powershell
 .\.venv\Scripts\python.exe main.py
 ```
 
-## 怎么用
+## 解密文件
 
-运行 `main.py` 后，菜单里有三个选项：
+启动 `main.py` 后，按菜单提示操作：
 
-1. **解密单个文件**：选择一个 `.xm` 文件。
-2. **批量解密文件**：选择一个文件夹，程序只处理这个文件夹第一层的 `.xm` 文件，不会进入子文件夹。
-3. **退出**。
+1. 选“解密单个文件”，处理一个 `.xm` 文件；或者选“批量解密文件”，处理一个文件夹里的文件。
+2. 批量模式只看所选文件夹的第一层，不会继续扫描子文件夹。
+3. 程序会问你要不要在文件名前加集数，例如 `0204 - 标题.m4a`。集数取自 XM 文件的元数据。
+4. 再选择输出目录。不指定时，文件会放在程序目录下的 `output` 文件夹。
 
-选择文件后，程序会询问两个问题：
-
-- 是否在文件名前加集数，例如 `0204 - 标题.m4a`。集数来自 XM 文件自身的元数据。
-- 是否指定输出目录。不指定时，文件会保存到程序当前工作目录下的 `output` 文件夹。
-
-每张专辑会单独放在一个文件夹中，例如：
+不同专辑会分开放置，目录大致如下：
 
 ```text
 output/
@@ -66,62 +57,58 @@ output/
    └─ 第205集.m4a
 ```
 
-如果输出目录里已经有同名文件，程序会在新文件名后加上 `(1)`、`(2)`，不会直接覆盖原文件。
+输出目录里如果已经有同名文件，程序会自动在文件名后加 `(1)`、`(2)`，不会把原文件覆盖掉。遇到空文件、损坏文件或暂时识别不了的音频时，该文件会被跳过，任务结束后可以在失败清单里查看原因，其他文件不受影响。
 
-遇到空文件、损坏文件或无法识别的音频时，程序会跳过该文件，任务结束后在失败清单里显示原因，其他文件仍会继续处理。
+## 整理文件名
 
-## 文件名整理工具
-
-`rename.py` 用来整理已经解密好的音频文件名。它支持 `.mp3`、`.m4a`、`.flac` 和 `.wav`。
+`rename.py` 可以把已经解密好的音频重新编号，支持 `.mp3`、`.m4a`、`.flac` 和 `.wav`：
 
 ```powershell
 python rename.py
 ```
 
-运行后选择音频文件夹，工具会把文件名整理成类似下面的格式：
+选择音频文件夹后，它会尝试把文件名整理成这样：
 
 ```text
 [0001] 标题.m4a
 [0002] 标题.m4a
 ```
 
-它会尝试删除原来的 `[0001]` 前缀，并把文件名中找到的第一段数字当作集数。标题中本来就有数字时，建议改名后检查一下结果。目标名称重复的文件不会强行覆盖，会列在失败清单中。
+程序会去掉原有的 `[0001]` 前缀，并把文件名里找到的第一段数字当作集数。如果标题本身带数字，改名后请顺手检查一下。遇到重名文件时不会强行覆盖，而是放进失败清单。这个脚本同样只处理当前文件夹，不会递归子目录；批量改名前建议先备份。
 
-这个工具同样只处理所选文件夹的第一层，不会递归子目录。批量改名之前，最好先备份文件名或整个文件夹。
-
-## v1.0.5 更新内容
+## v1.0.5 更新
 
 - 修复部分解密数据末尾字节丢失的问题。
-- 改进加密数据长度处理，遇到不完整文件时给出提示。
-- XM 文件缺少必要信息时，显示更明确的错误。
+- 改进加密数据长度检查，文件不完整时会给出提示。
+- XM 文件缺少必要信息时，报错内容更容易看懂。
 - 处理非法文件名、Windows 保留名称和危险路径。
 - 输出文件重名时不再静默覆盖。
 - 修复批量重命名时的文件名冲突和交换问题。
 
 ## 常见问题
 
-### 提示 `ModuleNotFoundError`
+### `ModuleNotFoundError`
 
-通常是依赖没有装到当前使用的 Python 里。请在运行程序的同一个终端重新执行：
+一般是依赖装到了另一个 Python 环境。请在运行程序的同一个 PowerShell 窗口里重新安装：
 
 ```powershell
 python -m pip install mutagen pycryptodome wasmer==1.1.0 wasmer_compiler_cranelift==1.1.0 python-magic-bin
 ```
 
-### 提示找不到 `xm_encryptor.wasm`
+### 找不到 `xm_encryptor.wasm`
 
-确认这个文件和 `main.py` 在同一目录，不要只复制 Python 脚本。
+确认 `xm_encryptor.wasm` 和 `main.py` 在同一个目录，不要只复制 Python 文件。
 
-### 提示 `unexpected format`
+### `unexpected format`
 
-程序没有识别出解密后的音频格式。一般是源 `.xm` 文件下载不完整、文件已损坏，或格式暂不支持。可以重新下载后再试。
+通常是 `.xm` 文件没有下载完整、文件已经损坏，或者当前格式还不支持。重新下载文件后再试试。
 
-### 文件选择窗口没有打开
+### 文件选择窗口没有弹出
 
-程序使用 Windows 的图形界面选择文件和文件夹，请在正常的 Windows 桌面环境运行。
+工具依赖 Windows 的图形界面选择文件。请在正常的 Windows 桌面环境中运行，不要在没有图形界面的远程终端里运行。
 
 ## 鸣谢
 
-本项目基于 [sld272/Ximalaya-XM-Decrypt](https://github.com/sld272/Ximalaya-XM-Decrypt) 继续维护。感谢原作者提供 `xm_encryptor.wasm` 和基础 Python 实现。
+这个项目是在 [sld272/Ximalaya-XM-Decrypt](https://github.com/sld272/Ximalaya-XM-Decrypt) 的基础上继续维护的，感谢原作者提供 `xm_encryptor.wasm` 和最初的 Python 实现。
 
-反馈问题时，请附上错误信息、文件大小和音频格式等信息。请不要上传包含个人信息或版权受限的音频文件。
+遇到问题时，欢迎附上错误信息、文件大小和音频格式。请不要上传带有个人信息或版权受限的音频文件。
