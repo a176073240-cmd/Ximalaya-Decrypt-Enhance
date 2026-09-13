@@ -119,6 +119,23 @@ python -m pip install mutagen pycryptodome wasmtime python-magic-bin
 
 ## 鸣谢
 
-这个项目是在 [sld272/Ximalaya-XM-Decrypt](https://github.com/sld272/Ximalaya-XM-Decrypt) 的基础上继续维护的，感谢原作者提供 `xm_encryptor.wasm` 和最初的 Python 实现。
+这个项目是在 [sld272/Ximalaya-XM-Decrypt](https://github.com/sld272/Ximalaya-XM-Decrypt) 的基础上继续维护和改进的。
+
+解密原理参考 [Aynakeya：喜马拉雅 XM 文件解密逆向分析](https://www.aynakeya.com/2023/03/15/ctf/xi-ma-la-ya-xm-wen-jian-jie-mi-ni-xiang-fen-xi/)。感谢相关作者和研究者的技术分享。
 
 遇到问题时，欢迎附上错误信息、文件大小和音频格式。请不要上传带有个人信息或版权受限的音频文件。
+
+## 免责声明与来源说明
+
+本项目仅用于处理用户已经合法取得、并且有权使用的本地 `.xm` 文件。
+本工具不提供账号登录、付费内容获取或绕过平台授权的功能。
+
+请遵守喜马拉雅服务条款、版权规定和当地法律。因使用本项目产生的任何后果，由使用者自行承担。
+
+本项目包含来源于第三方项目和技术研究的代码、算法实现及 `xm_encryptor.wasm`。相关内容的权利归其合法权利人所有，本项目不声明对这些第三方内容拥有所有权，也不授予超出原权利范围的再授权。
+
+## 许可证
+
+本项目当前未声明统一的开源许可证。
+
+这是因为仓库包含来源于第三方项目及技术研究的内容，目前无法确认所有相关代码、算法和文件都具备统一再授权条件。使用、修改或再分发前，请自行确认相关内容的授权情况。
