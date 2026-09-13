@@ -31,6 +31,7 @@ def main():
 
     print(f"\n扫描到 {len(files)} 个文件，开始强制清洗...\n")
 
+    planned = {}
     for filename in files:
         name_without_ext, ext = os.path.splitext(filename)
         
@@ -55,11 +56,39 @@ def main():
         if filename == new_filename:
             continue
 
+        planned[filename] = new_filename
+
+    source_names = {os.path.normcase(name) for name in planned}
+    destinations = set()
+    for filename in list(planned):
+        new_filename = planned[filename]
+        normalized_new = os.path.normcase(new_filename)
+        if normalized_new in destinations or (normalized_new != os.path.normcase(filename) and normalized_new not in source_names and os.path.exists(os.path.join(folder_path, new_filename))):
+            fail_list.append(f"{filename} (原因: 目标文件名已存在或重复: {new_filename})")
+            del planned[filename]
+            continue
+        destinations.add(normalized_new)
+
+    # Two-phase rename prevents collisions between source and destination names.
+    temp_paths = {}
+    for filename, new_filename in planned.items():
         old_path = os.path.join(folder_path, filename)
+        temp_path = old_path + ".ximalaya-renaming-tmp"
+        suffix = 1
+        while os.path.exists(temp_path):
+            temp_path = f"{old_path}.ximalaya-renaming-tmp-{suffix}"
+            suffix += 1
+        try:
+            os.rename(old_path, temp_path)
+            temp_paths[filename] = (temp_path, new_filename)
+        except Exception as e:
+            fail_list.append(f"{filename} (原因: {e})")
+
+    for filename, (temp_path, new_filename) in temp_paths.items():
         new_path = os.path.join(folder_path, new_filename)
 
         try:
-            os.rename(old_path, new_path)
+            os.rename(temp_path, new_path)
             success_list.append(f"{filename}  ==>  {new_filename}")
         except Exception as e:
             fail_list.append(f"{filename} (原因: {e})")

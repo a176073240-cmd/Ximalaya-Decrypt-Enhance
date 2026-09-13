@@ -47,9 +47,14 @@ def read_file(x):
 def get_xm_info(data: bytes):
     id3 = ID3(io.BytesIO(data), v2_version=3)
     id3value = XMInfo()
-    id3value.title = str(id3["TIT2"])
-    id3value.album = str(id3["TALB"])
-    id3value.artist = str(id3["TPE1"])
+    try:
+        id3value.title = str(id3["TIT2"])
+        id3value.album = str(id3["TALB"])
+        id3value.artist = str(id3["TPE1"])
+        id3value.size = int(str(id3["TSIZ"]))
+        id3value.encoding_technology = str(id3["TSSE"])
+    except (KeyError, TypeError, ValueError) as exc:
+        raise ValueError("XM 文件缺少必要的 ID3 元数据") from exc
     # 提取官方文件头里自带的真实集数序号
     try:
         id3value.tracknumber = int(str(id3["TRCK"]))
@@ -58,18 +63,15 @@ def get_xm_info(data: bytes):
         
     id3value.ISRC = "" if id3.get("TSRC") is None else str(id3["TSRC"])
     id3value.encodedby = "" if id3.get("TENC") is None else str(id3["TENC"])
-    id3value.size = int(str(id3["TSIZ"]))
     id3value.header_size = id3.size
-    id3value.encoding_technology = str(id3["TSSE"])
     return id3value
 
 
 def get_printable_count(x: bytes):
-    i = 0
     for i, c in enumerate(x):
         if c < 0x20 or c > 0x7e:
             return i
-    return i
+    return len(x)
 
 
 def get_printable_bytes(x: bytes):
@@ -89,7 +91,11 @@ def xm_decrypt(raw_data):
     # Stage 1 aes-256-cbc
     xm_key = b"ximalayaximalayaximalayaximalaya"
     cipher = AES.new(xm_key, AES.MODE_CBC, xm_info.iv())
-    de_data = cipher.decrypt(pad(encrypted_data, 16))
+    if not encrypted_data:
+        raise ValueError("XM 加密数据长度无效，文件可能不完整")
+    # Some XM variants store a partial final block; pad only that case.
+    decrypt_data = encrypted_data if len(encrypted_data) % 16 == 0 else pad(encrypted_data, 16)
+    de_data = cipher.decrypt(decrypt_data)
     
     # Stage 2 xmDecrypt
     de_data = get_printable_bytes(de_data)
@@ -132,10 +138,30 @@ def find_ext(data):
 
 def replace_invalid_chars(name):
     invalid_chars = ['/', '\\', ':', '*', '?', '"', '<', '>', '|']
+    name = name.strip().rstrip(".")
     for char in invalid_chars:
         if char in name:
             name = name.replace(char, " ")
+    name = " ".join(name.split())
+    if not name or name in {".", ".."}:
+        return "未命名"
+    device_name = name.split(".", 1)[0].upper()
+    if device_name in {"CON", "PRN", "AUX", "NUL"} or (device_name.startswith(("COM", "LPT")) and device_name[3:].isdigit()):
+        return f"_{name}"
     return name
+
+
+def unique_output_file(path):
+    """Return a non-existing path, preserving the original extension."""
+    if not os.path.exists(path):
+        return path
+    stem, ext = os.path.splitext(path)
+    index = 1
+    while True:
+        candidate = f"{stem} ({index}){ext}"
+        if not os.path.exists(candidate):
+            return candidate
+        index += 1
 
 
 def decrypt_xm_file(from_file, output_path, do_rename=False):
@@ -147,6 +173,9 @@ def decrypt_xm_file(from_file, output_path, do_rename=False):
     ext = find_ext(audio_data[:0xff])
     
     album_path = os.path.join(output_path, album_name)
+    output_root = os.path.abspath(output_path)
+    if os.path.commonpath([output_root, os.path.abspath(album_path)]) != output_root:
+        raise ValueError("专辑名称包含非法路径")
     if not os.path.exists(album_path):
         os.makedirs(album_path)
         
@@ -156,6 +185,7 @@ def decrypt_xm_file(from_file, output_path, do_rename=False):
         output_file = os.path.join(album_path, formatted_name)
     else:
         output_file = os.path.join(album_path, f"{title_name}.{ext}")
+    output_file = unique_output_file(output_file)
     
     buffer = io.BytesIO(audio_data)
     
